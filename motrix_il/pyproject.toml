@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=71.0.0,<81.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motrix-il"
+version = "0.1.0"
+description = "Imitation learning utilities for MotrixLab powered by a vendored LeRobot checkout."
+authors = [{ name = "Motphys", email = "developers@motphys.com" }]
+requires-python = ">=3.12,<3.13"
+readme = "README.md"
+license = "Apache-2.0"
+dependencies = [
+    "lerobot",
+]
+
+[project.optional-dependencies]
+dataset = ["lerobot[dataset]"]
+training = ["lerobot[training]"]
+diffusion = ["lerobot[diffusion]"]
+pi = ["lerobot[pi]"]
+smolvla = ["lerobot[smolvla]"]
+wallx = ["lerobot[wallx]"]
+multi-task-dit = ["lerobot[multi-task-dit]"]
+pusht = ["lerobot[pusht]"]
+aloha = ["lerobot[aloha]", "dm-control==1.0.37", "mujoco==3.5.0"]
+libero = ["lerobot[libero]"]
+simulation = [
+    "lerobot[aloha]",
+    "lerobot[pusht]",
+    "lerobot[libero]",
+    "dm-control==1.0.37",
+    "mujoco==3.5.0",
+]
+dev = ["pytest>=8.3.3"]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+lerobot = { path = "src/lerobot-main", editable = true }

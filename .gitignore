@@ -1,0 +1,32 @@
+__pycache__
+runs
+.pdm-python
+logs
+.idea
+.claude
+.venv
+node_modules
+docs/build
+docs/source/user_guide
+docs/source/index.md
+.worktrees
+
+# Training outputs, checkpoints, and logs
+outputs/
+checkpoints/
+wandb/
+tensorboard/
+*.log
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.mp4
+
+# Local binary dependency/cache artifacts
+wheels/
+*.whl
+
+# Vendored LeRobot binary test artifacts
+/lerobot-main/tests/artifacts/**
+/motrix_il/src/lerobot-main/tests/artifacts/**
