@@ -77,6 +77,11 @@ class _MotrixTopCameraRenderer:
                 if image is not None:
                     pixels = np.asarray(image.pixels)
                     frame = self._coerce_frame(pixels)
+                    if frame.max() < 8 or int(frame.max()) - int(frame.min()) < 20:
+                        self._app.sync(data=self._env.state.data, wait=True)
+                        time.sleep(0.01)
+                        continue
+                    frame = self._blacken_connected_background(frame)
                     if not self._logged_first_real_frame:
                         camera_cfg = self._env.model.cameras[self._camera_name]
                         LOGGER.warning(
@@ -143,9 +148,12 @@ class _MotrixTopCameraRenderer:
             camera.set_near_far(0.01, 10.0)
             camera.set_render_target("image", self._width, self._height)
             app = RenderApp()
-            settings = RenderSettings.performance()
-            settings.enable_shadow = True
+            settings = RenderSettings.quality()
             app.launch(self._env.model, batch=1, render_settings=settings)
+            if self._env.state is not None:
+                for _ in range(5):
+                    app.sync(data=self._env.state.data, wait=True)
+                    time.sleep(0.02)
             self._app = app
             self._camera = app.get_camera(camera.index)
             self._enabled = True
@@ -179,6 +187,54 @@ class _MotrixTopCameraRenderer:
         if pixels.shape[:2] != (self._height, self._width):
             pixels = np.resize(pixels, (self._height, self._width, 3))
         return np.ascontiguousarray(pixels, dtype=np.uint8)
+
+    @staticmethod
+    def _blacken_connected_background(frame: np.ndarray):
+        try:
+            import cv2
+        except Exception:
+            return frame
+
+        height, width = frame.shape[:2]
+        border = np.concatenate(
+            [
+                frame[0, :, :],
+                frame[-1, :, :],
+                frame[:, 0, :],
+                frame[:, -1, :],
+            ],
+            axis=0,
+        )
+        bg_color = np.median(border, axis=0)
+        tolerance = 16
+        mask = np.zeros((height + 2, width + 2), dtype=np.uint8)
+        work = frame.copy()
+        flags = 4 | cv2.FLOODFILL_FIXED_RANGE | cv2.FLOODFILL_MASK_ONLY | (255 << 8)
+        lo_diff = (tolerance, tolerance, tolerance)
+        up_diff = (tolerance, tolerance, tolerance)
+
+        seeds = []
+        step = max(1, min(width, height) // 24)
+        for x in range(0, width, step):
+            seeds.append((x, 0))
+            seeds.append((x, height - 1))
+        for y in range(0, height, step):
+            seeds.append((0, y))
+            seeds.append((width - 1, y))
+
+        for seed in seeds:
+            x, y = seed
+            if mask[y + 1, x + 1]:
+                continue
+            if np.max(np.abs(frame[y, x].astype(np.float32) - bg_color)) > tolerance:
+                continue
+            cv2.floodFill(work, mask, seed, (0, 0, 0), lo_diff, up_diff, flags)
+
+        background = mask[1:-1, 1:-1] != 0
+        if background.mean() > 0.8:
+            return frame
+        frame[background] = 0
+        return frame
 
     def _dump_debug_frame(self, frame: np.ndarray):
         try:
@@ -219,17 +275,12 @@ class MotrixAlohaTransferCubeGymEnv(gym.Env):
             env_cfg_override={"max_episode_seconds": max_episode_steps / self.metadata["render_fps"]},
             num_envs=1,
         )
-        self._state = self._env.init_state()
+        self._state = None
         self._last_info: dict[str, Any] = {}
+        self._seeded = False
         self._allow_render_fallback = os.getenv("MOTRIX_ALLOW_RENDER_FALLBACK") == "1"
         self._logged_fallback_frame = False
-        self._renderer = _MotrixTopCameraRenderer(
-            self._env,
-            width=self.observation_width,
-            height=self.observation_height,
-            camera_name="top",
-            required=not self._allow_render_fallback,
-        )
+        self._renderer = None
 
         self.action_space = spaces.Box(-np.inf, np.inf, shape=(14,), dtype=np.float32)
         image_space = spaces.Box(
@@ -250,12 +301,17 @@ class MotrixAlohaTransferCubeGymEnv(gym.Env):
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
+        if seed is not None and not self._seeded:
+            self._env.seed(seed)
+            self._seeded = True
         self._state = self._env.init_state()
         obs = self._format_observation()
         self._last_info = self._format_info(self._state)
         return obs, self._last_info
 
     def step(self, action):
+        if self._state is None:
+            raise RuntimeError("Call reset() before step().")
         action = np.asarray(action, dtype=np.float32).reshape(1, 14)
         self._state = self._env.step(action)
         obs = self._format_observation()
@@ -266,9 +322,12 @@ class MotrixAlohaTransferCubeGymEnv(gym.Env):
         return obs, reward, terminated, truncated, self._last_info
 
     def render(self):
+        if self._state is None:
+            raise RuntimeError("Call reset() before render().")
+        self._ensure_renderer()
         frame = self._renderer.render()
         if frame is not None:
-            return frame
+            return self._add_top_contact_shadow(frame)
         if not self._allow_render_fallback:
             raise RuntimeError(
                 "MotrixSim top camera did not return a frame. Set MOTRIX_ALLOW_RENDER_FALLBACK=1 "
@@ -282,12 +341,24 @@ class MotrixAlohaTransferCubeGymEnv(gym.Env):
                 self.observation_height,
             )
             self._logged_fallback_frame = True
-        return self._fallback_top_frame()
+        return self._add_top_contact_shadow(self._fallback_top_frame())
 
     def close(self):
         return None
 
+    def _ensure_renderer(self):
+        if self._renderer is None:
+            self._renderer = _MotrixTopCameraRenderer(
+                self._env,
+                width=self.observation_width,
+                height=self.observation_height,
+                camera_name="top",
+                required=not self._allow_render_fallback,
+            )
+
     def _format_observation(self):
+        if self._state is None:
+            raise RuntimeError("Call reset() before requesting an observation.")
         obs: dict[str, Any] = {"pixels": {"top": self.render()}}
         if self.obs_type == "pixels_agent_pos":
             obs["agent_pos"] = np.asarray(self._state.obs[0], dtype=np.float32)
@@ -314,6 +385,52 @@ class MotrixAlohaTransferCubeGymEnv(gym.Env):
         self._draw_square(frame, self._world_to_top_pixel(left_hint), size=12, color=(48, 88, 170))
         self._draw_square(frame, self._world_to_top_pixel(right_hint), size=12, color=(42, 132, 86))
         return frame
+
+    def _add_top_contact_shadow(self, frame: np.ndarray):
+        try:
+            import cv2
+        except Exception:
+            return frame
+
+        qpos = np.asarray(self._state.data.dof_pos[0], dtype=np.float32)
+        cube_xy = qpos[-7:-5]
+        cx, cy = self._world_to_top_pixel(cube_xy)
+        offset_x = max(2, int(self.observation_width * 0.01))
+        offset_y = max(2, int(self.observation_height * 0.012))
+        half_w = max(5, int(self.observation_width * 0.018))
+        half_h = max(3, int(self.observation_height * 0.011))
+        center = np.array([cx - offset_x, cy + offset_y], dtype=np.float32)
+        corners = np.array(
+            [
+                [-half_w, -half_h],
+                [half_w, -half_h],
+                [half_w, half_h],
+                [-half_w, half_h],
+            ],
+            dtype=np.float32,
+        )
+        angle = -0.35
+        rot = np.array(
+            [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]],
+            dtype=np.float32,
+        )
+        pts = np.rint(corners @ rot.T + center).astype(np.int32)
+
+        shadow = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv2.fillConvexPoly(shadow, pts, 150)
+        table_mask = np.logical_and.reduce(
+            (
+                frame[:, :, 0] > 45,
+                frame[:, :, 0] < 180,
+                frame[:, :, 1] > 45,
+                frame[:, :, 1] < 180,
+                frame[:, :, 2] > 45,
+                frame[:, :, 2] < 180,
+            )
+        )
+        alpha = (shadow.astype(np.float32) / 255.0) * table_mask.astype(np.float32) * 0.78
+        shaded = frame.astype(np.float32) * (1.0 - alpha[:, :, None])
+        return np.ascontiguousarray(np.clip(shaded, 0, 255).astype(np.uint8))
 
     def _world_to_top_pixel(self, xy: np.ndarray):
         x, y = float(xy[0]), float(xy[1])

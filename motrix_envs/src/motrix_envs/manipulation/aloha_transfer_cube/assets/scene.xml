@@ -3,23 +3,28 @@
 
     <asset>
         <mesh file="tabletop.stl" name="tabletop" scale="0.001 0.001 0.001"/>
+        <texture name="aloha_black_skybox" type="skybox" builtin="flat" rgb1="0 0 0" rgb2="0 0 0" width="512" height="512"/>
+        <material name="aloha_robot_bright" rgba="0.82 0.84 0.88 1" specular="0.45" shininess="0.35"/>
+        <material name="aloha_cube_bright_red" rgba="1 0.04 0.02 1" emission="0.12 0 0 1" specular="0.35" shininess="0.25"/>
+        <material name="aloha_table_dark" rgba="0.32 0.32 0.32 1" specular="0.08" shininess="0.08"/>
     </asset>
 
     <visual>
         <map fogstart="1.5" fogend="5" force="0.1" znear="0.1"/>
-        <quality shadowsize="4096" offsamples="4"/>
-        <headlight ambient="0.4 0.4 0.4"/>
+        <quality shadowsize="8192" offsamples="4"/>
+        <rgba haze="0 0 0 1"/>
+        <headlight ambient="0.2 0.2 0.2" diffuse="0.35 0.35 0.35" specular="0.35 0.35 0.35"/>
     </visual>
 
     <worldbody>
-        <light castshadow="false" directional='true' diffuse='.3 .3 .3' specular='0.3 0.3 0.3' pos='-1 -1 1'
+        <light castshadow="false" directional='true' diffuse='.08 .08 .08' specular='0.08 0.08 0.08' pos='-1 -1 1'
                dir='1 1 -1'/>
-        <light directional='true' diffuse='.3 .3 .3' specular='0.3 0.3 0.3' pos='1 -1 1' dir='-1 1 -1'/>
-        <light castshadow="false" directional='true' diffuse='.3 .3 .3' specular='0.3 0.3 0.3' pos='0 1 1'
+        <light directional='true' diffuse='1.6 1.6 1.6' specular='0.75 0.75 0.75' pos='1 -1 1' dir='-1 1 -1' bulbradius="0"/>
+        <light castshadow="false" directional='true' diffuse='.06 .06 .06' specular='0.06 0.06 0.06' pos='0 1 1'
                dir='0 -1 -1'/>
 
         <body name="table" pos="0 .6 0">
-            <geom group="1" mesh="tabletop" pos="0 0 0" type="mesh" conaffinity="1" contype="1" name="table" rgba="0.2 0.2 0.2 1" />
+            <geom group="1" mesh="tabletop" pos="0 0 0" type="mesh" conaffinity="1" contype="1" name="table" material="aloha_table_dark" />
         </body>
         <body name="midair" pos="0 .6 0.2">
             <site pos="0 0 0" size="0.01" type="sphere" name="midair" rgba="1 0 0 0"/>

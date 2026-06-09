@@ -1,192 +1,501 @@
-# MotrixLab IL Integration Plan: LeRobot + Robomimic
+# MotrixLab IL 项目结构：LeRobot 集成
 
-## 1. 背景与动机
+## 1. 项目概述
 
-### 1.1 现状
+MotrixLab 在 Python 3.12 workspace 中统一了强化学习（RL）与模仿学习（IL），三个 workspace 成员共享根目录 `.venv`：
 
-| 组件 | Python | 框架 | 定位 |
-|---|---|---|---|
-| motrix_envs + motrix_rl | 3.12 | SKRL / RSLRL | 强化学习（workspace 成员） |
-| motrix_il | 3.12 | LeRobot (vendored) | 模仿学习（workspace 成员） |
-| robomimic | 3.8+ | PyTorch | 模仿学习（待集成） |
+| 组件 | Python | 定位 |
+|---|---|---|
+| motrix_envs | 3.12 | 仿真环境定义（MotrixSim 后端） |
+| motrix_rl | 3.12 | RL 训练框架（SKRL / RSLRL） |
+| motrix_il | 3.12 | 模仿学习（LeRobot vendored） |
 
-### 1.2 核心冲突
-
-- **Python 版本**：当前 workspace 已统一到 Python 3.12；后续需要持续确认 MotrixSim、SKRL、RSLRL 与 LeRobot 的依赖组合可解析
-- **robomimic 依赖老旧**：`diffusers==0.11.1`、`transformers==4.41.2`、`huggingface_hub==0.23.4`，与 LeRobot 的现代依赖（diffusers>=0.27.2、huggingface-hub>=1.0.0）直接冲突
-
-### 1.3 设计原则
-
-1. **最小破坏**：不破坏现有 motrix_rl 工作流
-2. **独立适配**：每个 IL 框架独立对接 MotrixSim，不引入不必要的抽象层
-3. **优先 LeRobot**：LeRobot 更活跃、依赖更新、社区更大；robomimic 作为经典 IL 算法补充
-4. **以 gymnasium 为桥梁**：MotrixSim 环境通过 gymnasium 接口暴露给两个框架
-
----
-
-## 2. Python 版本策略
-
-### 当前策略：统一 Python 3.12 workspace
+## 2. 目录结构
 
 ```
-Python 3.12
-┌──────────────────────────────────────┐
-│  motrix_envs                         │
-│  motrix_rl                           │
-│  motrix_il                           │
-│  ├── lerobot (vendored)              │
-│  └── robomimic (future vendor)       │
-└──────────────────────────────────────┘
-                   │
-          MotrixSim / Gymnasium 环境接口
+MotrixLab/                          # 根 workspace（Python 3.12）
+├── pyproject.toml                  # workspace 定义，members = [motrix_envs, motrix_rl, motrix_il]
+├── scripts/                        # RL 入口脚本
+│   ├── train.py                    # RL 训练
+│   ├── view.py                     # 环境可视化
+│   └── play.py                     # 策略评估
+│
+├── motrix_envs/                    # 仿真环境包
+│   └── src/motrix_envs/
+│       ├── registry.py             # 环境注册系统（@envcfg, @env 装饰器）
+│       ├── base.py                 # EnvCfg, ABEnv 基类
+│       ├── np/                     # MotrixSim NumPy 后端
+│       │   ├── env.py              # NpEnv（所有环境的基类）
+│       │   └── renderer.py         # 渲染器
+│       ├── manipulation/           # 机械臂操作环境
+│       │   ├── aloha_transfer_cube/    # 双臂 ALOHA 传方块（14-DOF）
+│       │   ├── franka_lift_cube/       # Franka 抬方块
+│       │   ├── franka_open_cabinet/    # Franka 开柜门
+│       │   ├── libero/                 # LIBERO 空间任务（7-DOF Panda）
+│       │   ├── rm65_open_cabinet/      # RM65 开柜门
+│       │   ├── shadow_hand/            # Shadow Hand 重定位
+│       │   ├── robomme/                # ★ RoboMME 桌面操作（7-DOF Franka，16 任务）
+│       │   └── vlabench/               # ★ VLABench 复杂操作（7-DOF Franka，41 任务）
+│       ├── locomotion/             # 四足运动环境
+│       ├── basic/                  # 经典控制环境
+│       └── imitation/              # ★ IL 桥接层 —— MotrixSim → gymnasium.Env
+│           └── wrappers/
+│               ├── __init__.py
+│               ├── aloha_transfer_cube_gym.py   # MotrixAlohaTransferCubeGymEnv
+│               ├── libero_gym.py                # MotrixLiberoGymEnv
+│               ├── robomme_gym.py               # ★ MotrixRoboMMEGymEnv
+│               └── vlabench_gym.py              # ★ MotrixVLABenchGymEnv
+│
+├── motrix_rl/                      # RL 训练框架包
+│   └── src/motrix_rl/
+│       ├── tasks/                  # 各环境的 RL 任务定义
+│       ├── skrl/                   # SKRL 框架适配（JAX / PyTorch）
+│       └── rslrl/                  # RSLRL 框架适配（PyTorch）
+│
+└── motrix_il/                      # 模仿学习包
+    ├── pyproject.toml              # 依赖 lerobot（path = src/lerobot-main）
+    └── src/
+        ├── motrix_il/              # motrix_il 自身包
+        │   └── __init__.py         # describe() 函数
+        │
+        └── lerobot-main/           # ★ vendored LeRobot 源码
+            └── src/lerobot/
+                ├── scripts/        # CLI：lerobot-train, lerobot-eval, lerobot-record 等
+                ├── configs/        # draccus 配置系统
+                ├── policies/       # 策略实现（ACT, Diffusion, VQ-BeT, Pi0, SmolVLA 等）
+                ├── datasets/       # LeRobotDataset 数据加载
+                ├── processor/      # 数据预处理管线
+                └── envs/           # ★ LeRobot 环境系统
+                    ├── configs.py                  # EnvConfig 注册表
+                    ├── motrixsim.py                # MotrixSim 环境工厂（ALOHA）
+                    ├── libero_motrixsim.py         # MotrixSim 环境工厂（LIBERO）
+                    ├── robomme_motrixsim.py        # ★ MotrixSim 环境工厂（RoboMME）
+                    └── vlabench_motrixsim.py       # ★ MotrixSim 环境工厂（VLABench）
 ```
 
-- 根目录 `.venv` 同时承载 RL 与 IL 依赖
-- `motrix_il` 已加入根 workspace，不再使用独立 `motrix_il/.venv`
-- LeRobot 和后续 robomimic 共享同一个 Python 3.12 环境，减少 torch / torchvision 等底层依赖重复安装
+## 3. 集成架构
 
----
-
-## 3. 目录结构
+### 3.1 数据流
 
 ```
-MotrixLab/
-├── motrix_envs/          # RL 环境（Python 3.12 workspace 成员）
-├── motrix_rl/            # RL 训练框架（Python 3.12 workspace 成员）
-├── motrix_il/            # IL 集合（Python 3.12 workspace 成员）
-│   ├── pyproject.toml
-│   ├── src/
-│   │   ├── lerobot-main/              # LeRobot vendored 源码（已有）
-│   │   ├── robomimic/                 # robomimic vendored 源码（新增）
-│   │   │   └── robomimic/             # robomimic Python 包本体
-│   │   │       ├── algo/              # BC, BCQ, CQL, IQL 等
-│   │   │       ├── config/            # 算法配置
-│   │   │       ├── models/            # 网络架构
-│   │   │       ├── envs/              # 环境 wrapper（已有 EnvBase 基类）
-│   │   │       └── utils/
-│   │   └── motrix_il/                 # motrix_il 自身包（已有）
-│   │       ├── __init__.py
-│   │       ├── lerobot_bridge/        # LeRobot 独立适配 MotrixSim（新增）
-│   │       │   ├── __init__.py
-│   │       │   ├── motrixsim_env.py   # MotrixSim 环境注册到 LeRobot env factory
-│   │       │   └── collect_demo.py    # LeRobot 格式演示数据采集（Parquet + 视频）
-│   │       └── robomimic_bridge/      # robomimic 独立适配 MotrixSim（新增）
-│   │           ├── __init__.py
-│   │           ├── motrixsim_env.py   # MotrixSim → robomimic EnvBase wrapper
-│   │           ├── collect_demo.py    # robomimic 格式演示数据采集（HDF5）
-│   │           └── config_template.py # robomimic config 模板（适配 MotrixSim 任务）
-│   └── scripts/                       # 入口脚本（新增）
-│       ├── train_lerobot.py           # LeRobot 训练入口
-│       ├── eval_lerobot.py            # LeRobot 评估入口
-│       ├── train_robomimic.py         # robomimic 训练入口
-│       └── eval_robomimic.py          # robomimic 评估入口
+LeRobot CLI (lerobot-train / lerobot-eval)
+    │
+    ▼
+EnvConfig.create_envs()          ← configs.py 中注册的配置类
+    │
+    ├── env.type=aloha ────────────→ AlohaEnv.create_envs()
+    │                                   │
+    │                                   ▼
+    │                              motrixsim.py:create_motrixsim_envs()
+    │                                   │
+    │                                   ▼
+    │                              MotrixAlohaTransferCubeGymEnv (gym.Env)
+    │
+    ├── env.type=libero ───────────→ LiberoEnv.create_envs()
+    │                                   │
+    │                                   ▼
+    │                              libero.py:create_libero_envs()
+    │                              (原始 LIBERO MuJoCo 后端)
+    │
+    ├── env.type=libero_motrixsim ─→ LiberoMotrixSimEnv.create_envs()
+    │                                   │
+    │                                   ▼
+    │                              libero_motrixsim.py
+    │                                   │
+    │                                   ▼
+    │                              MotrixLiberoGymEnv (gym.Env)
+    │
+    ├── env.type=motrixsim ────────→ MotrixSimEnv.create_envs()
+    │                                   │
+    │                                   ├── task=libero*    → libero_motrixsim.py
+    │                                   ├── task=robomme*   → robomme_motrixsim.py   ★
+    │                                   ├── task=vlabench*  → vlabench_motrixsim.py  ★
+    │                                   └── task=其他        → motrixsim.py
+    │
+    ├── env.type=robomme ──────────→ RoboMMEEnv.create_envs()
+    │   (原始 SAPIEN/ManiSkill 后端)    │
+    │                                   ▼
+    │                              robomme.py:create_robomme_envs()
+    │
+    ├── env.type=robomme_motrixsim → RoboMMEMotrixSimEnv.create_envs()   ★
+    │                                   │
+    │                                   ▼
+    │                              robomme_motrixsim.py
+    │                                   │
+    │                                   ▼
+    │                              MotrixRoboMMEGymEnv (gym.Env)
+    │
+    ├── env.type=vlabench ─────────→ VLABenchEnv.create_envs()
+    │   (原始 MuJoCo/dm_control 后端)   │
+    │                                   ▼
+    │                              vlabench.py:create_vlabench_envs()
+    │
+    └── env.type=vlabench_motrixsim → VLABenchMotrixSimEnv.create_envs() ★
+                                        │
+                                        ▼
+                                   vlabench_motrixsim.py
+                                        │
+                                        ▼
+                                   MotrixVLABenchGymEnv (gym.Env)
 ```
 
-两个框架各自完全独立的 bridge 和脚本，不共享抽象层。
+### 3.2 环境注册表
 
----
+#### 已实现
 
-## 4. robomimic 依赖冲突解决方案
+| env.type | 后端 | 环境类 | 动作维度 | 相机 |
+|---|---|---|---|---|
+| `aloha` | MotrixSim | `MotrixAlohaTransferCubeGymEnv` | 14 | top ×1 |
+| `aloha_mujoco` | MuJoCo | `gym_aloha.AlohaEnv` | 14 | top ×1 |
+| `libero` | MuJoCo (LIBERO) | LIBERO 原生环境 | 7 | agentview + eye_in_hand |
+| `libero_motrixsim` | MotrixSim | `MotrixLiberoGymEnv` | 7 | agentview + eye_in_hand |
+| `motrixsim` | MotrixSim | 按 task 自动选择 wrapper | 7-14 | 按任务 |
+| `pusht` | MuJoCo | `gym_pusht.PushTEnv` | 2 | top ×1 |
 
-### 4.1 问题
+#### 待实现（RoboMME / VLABench MotrixSim 后端）
 
-robomimic 在 `setup.py` 中硬编码了老旧版本的依赖：
+| env.type | 后端 | 环境类 | 动作维度 | 相机 | 任务数 |
+|---|---|---|---|---|---|
+| `robomme` | SAPIEN/ManiSkill | `RoboMMEGymEnv` (已有) | 8 (joint) / 7 (ee) | front + wrist | 16 |
+| `robomme_motrixsim` | **MotrixSim** | `MotrixRoboMMEGymEnv` (新建) | 8 (joint) / 7 (ee) | front + wrist | 16 |
+| `vlabench` | MuJoCo/dm_control | `VLABenchEnv` (已有) | 7 (eef) | front + second + wrist | 41 |
+| `vlabench_motrixsim` | **MotrixSim** | `MotrixVLABenchGymEnv` (新建) | 7 (eef) | front + second + wrist | 41 |
 
+### 3.3 桥接层 —— Gymnasium Wrappers
+
+核心桥接代码在 `motrix_envs/imitation/wrappers/`，负责将 MotrixSim 环境封装为标准 `gymnasium.Env`：
+
+**已实现：**
+
+**MotrixAlohaTransferCubeGymEnv** (`aloha_transfer_cube_gym.py`):
+- 通过 `registry.make("aloha-transfer-cube", "np")` 创建底层 MotrixSim 环境
+- `observation_space`: `Dict{"pixels": Dict{"top": ...}, "agent_pos": ...}`
+- `action_space`: `Box(-inf, inf, (14,))`
+- 自带 `_MotrixTopCameraRenderer`，使用 MotrixSim `RenderApp` 渲染顶部相机 RGB
+
+**MotrixLiberoGymEnv** (`libero_gym.py`):
+- 通过 `registry.make("libero", "np")` 创建底层 MotrixSim 环境
+- `observation_space`: `Dict{"pixels": Dict{"image", "image2"}, "robot_state": ...}`
+- `action_space`: `Box(-1, 1, (7,))`
+- 自带 `_MotrixLiberoCameraRenderer`，支持双相机渲染（agentview + eye_in_hand）
+- 支持 LIBERO 任务套件：`libero_spatial`, `libero_object`, `libero_goal`, `libero_10`
+
+**待实现：**
+
+**MotrixRoboMMEGymEnv** (`robomme_gym.py`):
+- 通过 `registry.make("robomme", "np")` 创建底层 MotrixSim 环境
+- `observation_space`: `Dict{"pixels": Dict{"image", "wrist_image"}, "agent_pos": (8,)}`
+  - `image`: front camera, `Box(0, 255, (256, 256, 3), uint8)`
+  - `wrist_image`: wrist camera, `Box(0, 255, (256, 256, 3), uint8)`
+  - `agent_pos`: 7 joint angles + 1 gripper, `Box(-inf, inf, (8,), float32)`
+- `action_space`: `Box(-1, 1, (8,))` (joint_angle) 或 `Box(-1, 1, (7,))` (ee_pose)
+- 自带双相机渲染器（front + wrist）
+- 支持 16 个任务，分 4 个套件：
+  - Counting: `BinFill`, `PickXtimes`, `SwingXtimes`, `StopCube`
+  - Permanence: `VideoUnmask`, `VideoUnmaskSwap`, `ButtonUnmask`, `ButtonUnmaskSwap`
+  - Reference: `PickHighlight`, `VideoRepick`, `VideoPlaceButton`, `VideoPlaceOrder`
+  - Imitation: `MoveCube`, `InsertPeg`, `PatternLock`, `RouteStick`
+- Success 检测：通过 `info["status"] == "success"` 判断
+
+**MotrixVLABenchGymEnv** (`vlabench_gym.py`):
+- 通过 `registry.make("vlabench", "np")` 创建底层 MotrixSim 环境
+- `observation_space`: `Dict{"pixels": Dict{"image", "second_image", "wrist_image"}, "agent_pos": (7,)}`
+  - `image`: front camera, `Box(0, 255, (480, 480, 3), uint8)`
+  - `second_image`: second camera, `Box(0, 255, (480, 480, 3), uint8)`
+  - `wrist_image`: wrist camera, `Box(0, 255, (480, 480, 3), uint8)`
+  - `agent_pos`: 3 pos_robot + 3 euler_xyz + 1 gripper, `Box(-inf, inf, (7,), float64)`
+- `action_space`: `Box(low=[-1,-1,-1,-1,-1,-1,0], high=[1,1,1,1,1,1,1], float32)` (7-D eef)
+  - Action 语义: `[x, y, z (robot frame), rx, ry, rz (extrinsic xyz euler), gripper(0=closed,1=open)]`
+- 自带三相机渲染器（front + second + wrist）
+- 支持 41 个任务，分 2 个套件：
+  - Primitive (19): `select_fruit`, `select_toy`, `select_chemistry_tube`, `add_condiment`, `select_book`, `select_painting`, `select_drink`, `insert_flower`, `select_billiards`, `select_ingredient`, `select_mahjong`, `select_poker`, `density_qa`, `friction_qa`, `magnetism_qa`, `reflection_qa`, `simple_cuestick_usage`, `simple_seesaw_usage`, `sound_speed_qa`, `thermal_expansion_qa`, `weight_qa`
+  - Composite (22): `cluster_billiards`, `cluster_book`, `cluster_drink`, `cluster_toy`, `cook_dishes`, `cool_drink`, `find_unseen_object`, `get_coffee`, `hammer_nail`, `heat_food`, `make_juice`, `play_mahjong`, `play_math_game`, `play_poker`, `play_snooker`, `rearrange_book`, `rearrange_chemistry_tube`, `set_dining_table`, `set_study_table`, `store_food`, `take_chemistry_experiment`, `use_seesaw_complex`
+- Success 检测：通过 dm_control 任务 `should_terminate_episode()` 判断
+
+### 3.4 LeRobot 环境工厂
+
+在 vendored LeRobot 中新增/待新增的文件：
+
+**已实现：**
+
+**`lerobot/envs/motrixsim.py`** — ALOHA 任务环境工厂：
+- `create_motrixsim_envs(task, n_envs, env_cls, episode_length)` → `{suite_name: {0: VectorEnv}}`
+- 支持任务别名：`AlohaTransferCube-v0`, `aloha-transfer-cube`, `transfer_cube`
+
+**`lerobot/envs/libero_motrixsim.py`** — LIBERO 任务环境工厂：
+- `create_libero_motrixsim_envs(task, n_envs, env_cls, episode_length)` → `{suite_name: {0: VectorEnv}}`
+
+**待实现：**
+
+**`lerobot/envs/robomme_motrixsim.py`** — RoboMME 任务环境工厂：
+- `create_robomme_motrixsim_envs(task, n_envs, env_cls, action_space, episode_length)` → `{suite_name: {0: VectorEnv}}`
+- 参考 `robomme.py` 中 `RoboMMEGymEnv` 的接口，将 `MotrixRoboMMEGymEnv` 包装为 VectorEnv
+- 需要支持 `action_space="joint_angle"|"ee_pose"` 参数
+
+**`lerobot/envs/vlabench_motrixsim.py`** — VLABench 任务环境工厂：
+- `create_vlabench_motrixsim_envs(task, n_envs, env_cls, gym_kwargs, episode_length)` → `{suite_name: {0: VectorEnv}}`
+- 参考 `vlabench.py` 中 `VLABenchEnv` 的接口，将 `MotrixVLABenchGymEnv` 包装为 VectorEnv
+- 需要支持 `robot="franka"` 和 `action_mode="eef"` 参数
+
+### 3.5 LeRobot Config 类
+
+在 `configs.py` 中待新增：
+
+**`RoboMMEMotrixSimEnv`**（注册名 `robomme_motrixsim`）:
 ```python
-# robomimic 当前 pins
-"huggingface_hub==0.23.4",   # → motrix_il 需要 >=1.0.0
-"transformers==4.41.2",      # → 与 LeRobot 可选依赖冲突
-"diffusers==0.11.1",         # → LeRobot 需要 >=0.27.2
+@EnvConfig.register_subclass("robomme_motrixsim")
+@dataclass
+class RoboMMEMotrixSimEnv(EnvConfig):
+    task: str = "PickXtimes"
+    fps: int = 10
+    episode_length: int = 300
+    action_space: str = "joint_angle"  # or "ee_pose"
+    features: dict  # ACTION(8), pixels/image, pixels/wrist_image, agent_pos(8)
+    features_map: dict  # 标准映射
 ```
 
-### 4.2 方案：Vendor + 松绑
-
-1. **不通过 pip 安装 robomimic**，直接将源码 vendored 到 `motrix_il/src/robomimic/`
-2. **删除 `setup.py` 中的硬 pins**，改为合理的最低版本约束：
-
+**`VLABenchMotrixSimEnv`**（注册名 `vlabench_motrixsim`）:
 ```python
-# motrix_il/src/robomimic/pyproject.toml（新建）
-[project]
-name = "robomimic-vendored"
-version = "0.3.0"
-requires-python = ">=3.12"
-dependencies = [
-    "torch",
-    "numpy>=1.13.3",
-    "h5py",
-    "tqdm",
-    "tensorboard",
-    "imageio",
-    "matplotlib",
-    # 以下使用宽松约束，由 LeRobot 的锁文件统一解析
-    "huggingface-hub>=0.23.0",
-    "transformers>=4.41.0",
-    "diffusers>=0.11.0",
-]
+@EnvConfig.register_subclass("vlabench_motrixsim")
+@dataclass
+class VLABenchMotrixSimEnv(EnvConfig):
+    task: str = "select_fruit"
+    fps: int = 10
+    episode_length: int = 500
+    obs_type: str = "pixels_agent_pos"
+    robot: str = "franka"
+    action_mode: str = "eef"
+    features: dict  # ACTION(7), pixels/image, pixels/second_image, pixels/wrist_image, agent_pos(7)
+    features_map: dict  # 标准映射
 ```
 
-3. **按需测试与修复**：
+## 4. 使用方式
 
-| robomimic 模块 | 是否使用冲突依赖 | 兼容性风险 | 处理方式 |
-|---|---|---|---|
-| `algo/bc.py` (BC, BC-RNN) | 否 | 低 | 直接可用 |
-| `algo/bcq.py` | 否 | 低 | 直接可用 |
-| `algo/cql.py` | 否 | 低 | 直接可用 |
-| `algo/iql.py` | 否 | 低 | 直接可用 |
-| `algo/td3_bc.py` | 否 | 低 | 直接可用 |
-| `algo/hbc.py` | 否 | 低 | 直接可用 |
-| `algo/diffusion_policy.py` | `diffusers` | 中 | 需要适配新版 diffusers API；**或者直接用 LeRobot 的 Diffusion Policy（更现代）** |
-| `algo/bc.py` (BC-Transformer) | `transformers`, `huggingface_hub` | 中 | 需要验证新版 transformers 兼容性 |
-| `models/transformers.py` | `transformers` | 中 | 同 BC-Transformer |
-| `config/` | 无直接冲突 | 低 | config_template 生成逻辑直接可用 |
+### 4.1 安装
 
-4. **关键决策**：Diffusion Policy 优先使用 LeRobot 的实现（更完善、社区维护更好），robomimic 的 `diffusion_policy.py` 仅作为参考。
+```bash
+# 基础 IL 环境
+uv sync --all-packages --extra training
 
----
+# 加仿真环境支持（PushT / ALOHA / LIBERO）
+uv sync --all-packages --extra training --extra simulation
 
-## 5. 实施阶段
+# 加特定策略
+uv sync --all-packages --extra training --extra diffusion
+uv sync --all-packages --extra training --extra pi
+```
 
-### Phase 1: motrix_il 修复与 LeRobot 跑通（1-2 天）
+### 4.2 训练
 
-**目标**：让当前 motrix_il + LeRobot 能正常 `uv sync` 并运行。
+使用 LeRobot 原生命令行，数据集来自 HuggingFace Hub：
 
-- [ ] 修复 `pyproject.toml` 中 `lerobot` 的 path → `src/lerobot-main`
-- [ ] 安装 Python 3.12（`uv python install 3.12`）
-- [ ] `uv sync --all-packages --all-extras` 通过
-- [ ] 验证 LeRobot CLI：`uv run lerobot-train --help`
-- [ ] 验证策略导入：`uv run python -c "from lerobot.policies.diffusion import DiffusionPolicy"`
+```bash
+# ACT 训练 ALOHA 任务
+uv run lerobot-train \
+  --policy.type=act \
+  --policy.device=cuda \
+  --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+  --output_dir=outputs/train/act_aloha_transfer_cube
 
-### Phase 2: LeRobot → MotrixSim 适配（2-3 天）
+# SmolVLA 训练 RoboMME
+uv run lerobot-train \
+  --policy.type=smolvla \
+  --policy.device=cuda \
+  --dataset.repo_id=lerobot/robomme \
+  --output_dir=outputs/train/smolvla_robomme
 
-**目标**：能用 LeRobot 在 MotrixSim 环境中训练 Diffusion Policy。
+# SmolVLA 训练 VLABench
+uv run lerobot-train \
+  --policy.type=smolvla \
+  --policy.device=cuda \
+  --dataset.repo_id=lerobot/vlabench \
+  --output_dir=outputs/train/smolvla_vlabench
+```
 
-- [ ] 在 `motrix_il/src/motrix_il/lerobot_bridge/` 创建 `MotrixSimEnvConfig`，注册到 LeRobot 的 env factory
-- [ ] 实现 MotrixSim → gymnasium 环境 wrapper（实现 `gymnasium.Env` 接口，内部调用 motrixsim）
-- [ ] 创建 LeRobot 格式的演示数据录制脚本 `scripts/collect_lerobot_demo.py`
-- [ ] 端到端跑通：录数据 → 训练 Diffusion Policy → 评估
-- [ ] 创建 `scripts/train_lerobot.py` 和 `scripts/eval_lerobot.py`
+### 4.3 评估
 
-### Phase 3: robomimic Vendored + MotrixSim 适配（2-3 天）
+**MotrixSim 后端评估：**
 
-**目标**：robomimic 核心算法（BC、BC-RNN）能在 MotrixSim 环境中训练。
+```bash
+# ALOHA 任务（MotrixSim 后端）
+uv run lerobot-eval \
+  --policy.path=outputs/train/act_aloha_transfer_cube/checkpoints/156000/pretrained_model \
+  --policy.device=cuda \
+  --env.type=aloha \
+  --env.task=AlohaTransferCube-v0 \
+  --env.episode_length=600 \
+  --eval.n_episodes=1 \
+  --eval.batch_size=2 \
+  --output_dir=outputs/eval/act_aloha_transfer_cube
 
-- [ ] 将 robomimic 源码 vendored 到 `motrix_il/src/robomimic/`
-- [ ] 新建 `motrix_il/src/robomimic/pyproject.toml`，松绑依赖版本
-- [ ] 实现 `motrix_il/src/motrix_il/robomimic_bridge/motrixsim_env.py`：封装 MotrixSim 环境为 robomimic 的 `EnvBase` 子类
-- [ ] 为 MotrixSim 任务编写 robomimic config JSON 模板
-- [ ] 实现 `motrix_il/src/motrix_il/robomimic_bridge/collect_demo.py`：录制演示数据为 robomimic HDF5 格式
-- [ ] 创建 `scripts/train_robomimic.py` 和 `scripts/eval_robomimic.py`
-- [ ] 端到端跑通：录数据 → BC/BC-RNN 训练 → rollout
+# LIBERO 任务（MotrixSim 后端）
+uv run lerobot-eval \
+  --policy.path=models/pi0_libero_finetuned \
+  --env.type=libero_motrixsim \
+  --env.task=libero_spatial \
+  --env.episode_length=280 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --eval.use_async_envs=false \
+  --policy.n_action_steps=10 \
+  --output_dir=outputs/eval/pi0_libero_spatial_motrixsim
 
-### Phase 4: Benchmark（持续）
+# RoboMME 任务（MotrixSim 后端）★
+uv run lerobot-eval \
+  --policy.path=models/smolvla_robomme \
+  --env.type=robomme_motrixsim \
+  --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
+  --env.episode_length=300 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --output_dir=outputs/eval/smolvla_robomme_motrixsim
 
-- [ ] 为 MotrixSim 标准任务（cartpole、franka_lift_cube、go2 等）训练基线策略
-- [ ] 分别在两个框架下评估，对比效果
-- [ ] 文档记录每个任务的最佳配置和结果
+# VLABench 任务（MotrixSim 后端）★
+uv run lerobot-eval \
+  --policy.path=models/smolvla_vlabench \
+  --env.type=vlabench_motrixsim \
+  --env.task=select_fruit,select_toy,insert_flower,add_condiment \
+  --env.episode_length=500 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --output_dir=outputs/eval/smolvla_vlabench_motrixsim
+```
 
----
+**原始后端评估（对比用）：**
 
-## 6. 依赖关系总览
+```bash
+# RoboMME SAPIEN/ManiSkill 后端
+uv run lerobot-eval \
+  --policy.path=models/smolvla_robomme \
+  --env.type=robomme \
+  --env.task=PickXtimes,BinFill,StopCube,MoveCube,InsertPeg \
+  --env.dataset_split=test \
+  --eval.n_episodes=10 \
+  --output_dir=outputs/eval/smolvla_robomme
+
+# VLABench MuJoCo/dm_control 后端
+MUJOCO_GL=egl uv run lerobot-eval \
+  --policy.path=models/smolvla_vlabench \
+  --env.type=vlabench \
+  --env.task=select_fruit,select_toy,insert_flower \
+  --env.episode_length=50 \
+  --eval.n_episodes=10 \
+  --output_dir=outputs/eval/smolvla_vlabench
+```
+
+## 5. 实施路线
+
+### Phase 1: 已完成
+
+- [x] `motrix_il` 加入根 workspace，RL 与 IL 共享 Python 3.12 环境
+- [x] LeRobot vendored 到 `motrix_il/src/lerobot-main/`
+- [x] `uv sync --all-packages --extra training` 可正常解析和安装
+- [x] MotrixSim 环境 wrapper：`MotrixAlohaTransferCubeGymEnv`、`MotrixLiberoGymEnv`
+- [x] LeRobot 环境工厂：`motrixsim.py`、`libero_motrixsim.py`
+- [x] LeRobot 配置注册：`MotrixSimEnv`（`motrixsim`）、`LiberoMotrixSimEnv`（`libero_motrixsim`）
+- [x] `AlohaEnv` 默认使用 MotrixSim 后端
+- [x] 端到端跑通：训练 → 评估（MotrixSim 和 MuJoCo 两种后端）
+- [x] 多策略支持：ACT、Diffusion、VQ-BeT、TD-MPC、Pi0、SmolVLA 等
+
+### Phase 2: RoboMME MotrixSim 适配（当前）
+
+- [ ] 创建 `motrix_envs/manipulation/robomme/` — MotrixSim 场景定义
+  - Franka 机械臂 + 桌面 + 操作对象（方块、按钮、骰子等）
+  - 16 个任务的场景变体（不同物体组合和位置）
+  - 注册环境名：`"robomme"`
+- [ ] 创建 `motrix_envs/imitation/wrappers/robomme_gym.py`
+  - `MotrixRoboMMEGymEnv(gym.Env)` 类
+  - 双相机渲染（front 256x256 + wrist 256x256）
+  - `action_space`: joint_angle (8-D) / ee_pose (7-D)
+  - `observation_space`: pixels(image, wrist_image) + agent_pos(8)
+- [ ] 创建 `motrix_il/src/lerobot-main/src/lerobot/envs/robomme_motrixsim.py`
+  - `create_robomme_motrixsim_envs()` 工厂函数
+  - `RoboMMEMotrixSimGymEnv` 适配层（如果需要标准化 LeRobot 期望的接口）
+- [ ] 在 `configs.py` 中新增 `RoboMMEMotrixSimEnv` 配置类（注册名 `robomme_motrixsim`）
+- [ ] 端到端验证：使用 `lerobot/smolvla_robomme` 策略在 MotrixSim 后端评估
+
+### Phase 3: VLABench MotrixSim 适配（当前）
+
+- [ ] 创建 `motrix_envs/manipulation/vlabench/` — MotrixSim 场景定义
+  - Franka 机械臂 + 桌面 + 多样化操作对象（水果、玩具、书籍、台球等）
+  - 41 个任务的场景变体（primitive 19 + composite 22）
+  - 注册环境名：`"vlabench"`
+- [ ] 创建 `motrix_envs/imitation/wrappers/vlabench_gym.py`
+  - `MotrixVLABenchGymEnv(gym.Env)` 类
+  - 三相机渲染（front 480x480 + second 480x480 + wrist 480x480）
+  - `action_space`: 7-D eef control (pos3 + euler3 + gripper)
+  - `observation_space`: pixels(image, second_image, wrist_image) + agent_pos(7)
+- [ ] 创建 `motrix_il/src/lerobot-main/src/lerobot/envs/vlabench_motrixsim.py`
+  - `create_vlabench_motrixsim_envs()` 工厂函数
+- [ ] 在 `configs.py` 中新增 `VLABenchMotrixSimEnv` 配置类（注册名 `vlabench_motrixsim`）
+- [ ] 端到端验证：使用 `lerobot/smolvla_vlabench` 策略在 MotrixSim 后端评估
+
+### Phase 4: 后续计划
+
+- [ ] **MotrixSim 演示数据采集**：实现从 MotrixSim 环境录制演示数据并转换为 LeRobot 格式（Parquet + 视频）
+- [ ] **更多环境扩展**：franka_lift_cube、franka_open_cabinet 等环境的 gymnasium wrapper
+- [ ] **robomimic 集成**：vendored robomimic 源码、适配 MotrixSim 环境、BC/BC-RNN 等经典算法
+
+## 6. Benchmarks 详细规格
+
+### 6.1 RoboMME
+
+| 属性 | 原始后端 | MotrixSim 后端 |
+|---|---|---|
+| 仿真引擎 | SAPIEN / ManiSkill | MotrixSim |
+| 机器人 | Franka (7-DOF + gripper) | Franka (7-DOF + gripper) |
+| 任务数 | 16 (4 suites × 4 tasks) | 16 |
+| 相机 | front 256×256 + wrist 256×256 | front 256×256 + wrist 256×256 |
+| 动作模式 | joint_angle (8-D) / ee_pose (7-D) | joint_angle (8-D) / ee_pose (7-D) |
+| 状态维度 | 8 (joints + gripper) | 8 (joints + gripper) |
+| 最大步数 | 300 | 300 |
+| FPS | 10 | 10 |
+| Success 信号 | `info["status"] == "success"` | `info["status"] == "success"` |
+| 数据集 | `lerobot/robomme` (1600 episodes) | 同上（兼容现有数据集） |
+
+**4 个任务套件：**
+
+| Suite | 任务 | 描述 |
+|---|---|---|
+| Counting | BinFill, PickXtimes, SwingXtimes, StopCube | 计数与序列操作 |
+| Permanence | VideoUnmask, VideoUnmaskSwap, ButtonUnmask, ButtonUnmaskSwap | 物体恒存性 |
+| Reference | PickHighlight, VideoRepick, VideoPlaceButton, VideoPlaceOrder | 参照物理解 |
+| Imitation | MoveCube, InsertPeg, PatternLock, RouteStick | 动作模仿 |
+
+### 6.2 VLABench
+
+| 属性 | 原始后端 | MotrixSim 后端 |
+|---|---|---|
+| 仿真引擎 | MuJoCo / dm_control | MotrixSim |
+| 机器人 | Franka (7-DOF + gripper) | Franka (7-DOF + gripper) |
+| 任务数 | 41 (19 primitive + 22 composite) | 41 |
+| 相机 | front 480×480 + second 480×480 + wrist 480×480 | front 480×480 + second 480×480 + wrist 480×480 |
+| 动作模式 | eef (7-D) | eef (7-D) |
+| 状态维度 | 7 (pos3 + euler3 + gripper) | 7 (pos3 + euler3 + gripper) |
+| 最大步数 | 500 | 500 |
+| FPS | 10 | 10 |
+| Success 信号 | `should_terminate_episode()` | `should_terminate_episode()` |
+| 数据集 | `lerobot/vlabench` | 同上（兼容现有数据集） |
+
+**Primitive 任务（19 个）：**
+`select_fruit`, `select_toy`, `select_chemistry_tube`, `add_condiment`, `select_book`, `select_painting`, `select_drink`, `insert_flower`, `select_billiards`, `select_ingredient`, `select_mahjong`, `select_poker`, `density_qa`, `friction_qa`, `magnetism_qa`, `reflection_qa`, `simple_cuestick_usage`, `simple_seesaw_usage`, `sound_speed_qa`, `thermal_expansion_qa`, `weight_qa`
+
+**Composite 任务（22 个）：**
+`cluster_billiards`, `cluster_book`, `cluster_drink`, `cluster_toy`, `cook_dishes`, `cool_drink`, `find_unseen_object`, `get_coffee`, `hammer_nail`, `heat_food`, `make_juice`, `play_mahjong`, `play_math_game`, `play_poker`, `play_snooker`, `rearrange_book`, `rearrange_chemistry_tube`, `set_dining_table`, `set_study_table`, `store_food`, `take_chemistry_experiment`, `use_seesaw_complex`
+
+## 7. 关键设计决策
+
+1. **Gymnasium 作为桥梁**：MotrixSim 环境通过 `gymnasium.Env` 接口暴露给 LeRobot，不引入额外的抽象层
+2. **Wrapper 在 motrix_envs 侧**：Gymnasium wrapper 放在 `motrix_envs/imitation/wrappers/`，因为它们是环境的一部分，不依赖 LeRobot
+3. **环境工厂在 LeRobot 侧**：`create_*_motrixsim_envs()` 等工厂函数在 vendored LeRobot 的 `envs/` 目录中，负责将 gym 环境包装为 LeRobot 需要的 `VectorEnv` 格式
+4. **统一 workspace**：RL 和 IL 共享同一个 `.venv`，避免依赖重复安装和版本冲突
+5. **直接使用 LeRobot CLI**：不创建额外的封装脚本，直接使用 `lerobot-train` / `lerobot-eval`，减少维护成本
+6. **兼容现有数据集**：MotrixSim 后端的 observation/action 空间与原始后端保持一致，确保可以直接使用 HuggingFace Hub 上已有的 LeRobot 格式数据集进行训练和评估
+7. **独立 env.type 命名**：每个 MotrixSim 后端使用 `{name}_motrixsim` 命名（如 `robomme_motrixsim`），与原始后端（`robomme`）并存，方便对比测试
+
+## 8. 依赖关系
 
 ```
 motrix_il (Python 3.12)
@@ -195,55 +504,38 @@ motrix_il (Python 3.12)
 │   ├── gymnasium
 │   ├── diffusers (>=0.27.2)
 │   ├── huggingface-hub (>=1.0.0)
-│   ├── datasets, pandas, pyarrow  [dataset extra]
-│   ├── accelerate, wandb           [training extra]
 │   └── ...
 │
-├── robomimic-vendored (path = src/robomimic)
-│   ├── torch (共用 LeRobot 的版本)
-│   ├── numpy
-│   ├── huggingface-hub (共用 LeRobot 的版本)
-│   ├── transformers (共用同一 venv 中的版本)
-│   └── diffusers (共用 LeRobot 的版本)
+├── motrix_envs (workspace 成员，共享 .venv)
+│   ├── motrixsim (>=0.7.0)
+│   └── gymnasium (与 LeRobot 共用版本)
 │
-└── motrix_il (自身包)
-    ├── lerobot_bridge/     # LeRobot 独立适配 MotrixSim
-    │   ├── motrixsim_env.py      # 环境注册到 LeRobot
-    │   └── collect_demo.py       # LeRobot 格式数据采集
-    └── robomimic_bridge/   # robomimic 独立适配 MotrixSim
-        ├── motrixsim_env.py      # 环境 wrapper (EnvBase 子类)
-        └── config_template.py    # JSON 配置模板
+└── motrix_il 自身包
+    └── __init__.py (describe 函数)
 ```
 
-**关键**：robomimic 和 LeRobot 共享同一个 Python 3.12 venv。通过 vendored + 松绑 pins 的方式，让 UV 解析出一套兼容的依赖版本。两个框架各自独立适配 MotrixSim，bridge 层互不依赖。
+## 9. 新增/待新增文件清单
 
----
+### 已实现
 
-## 7. 风险与应对
-
-| 风险 | 影响 | 应对 |
-|---|---|---|
-| robomimic 的旧代码不适配新版 diffusers API | Diffusion Policy 无法直接运行 | 优先使用 LeRobot 的 Diffusion Policy；robomimic 只取其 BC 等经典算法 |
-| motrixsim 不支持 Python 3.12 | 无法在 motrix_il 中直接 `import motrix_envs` | 短期通过 gymnasium 接口（subprocess 或 socket 通信）绕过；中期推动 motrixsim 支持 3.12 |
-| robomimic 长期不维护（最后 release 2023.07） | 安全漏洞、依赖过时 | 只 vendored 核心算法代码（algo/ + models/），按需修补；重点投资 LeRobot |
-| robomimic 的 config 系统与 LeRobot 不同 | 用户需要学习两套配置方式 | 各自独立脚本，不强制统一；文档分别说明 |
-
----
-
-## 8. 里程碑
-
-| 版本 | 内容 |
+| 文件 | 说明 |
 |---|---|
-| v0.4.0-alpha | Phase 1+2：LeRobot 在 MotrixSim 上跑通训练 |
-| v0.4.0-beta | Phase 3：robomimic BC 系列跑通 |
-| v0.4.0 | Phase 4：Benchmark |
-| v0.5.0 | Python 3.12 全项目统一（待 motrixsim 支持） |
+| `motrix_envs/src/motrix_envs/imitation/wrappers/aloha_transfer_cube_gym.py` | ALOHA gymnasium wrapper |
+| `motrix_envs/src/motrix_envs/imitation/wrappers/libero_gym.py` | LIBERO gymnasium wrapper |
+| `motrix_envs/src/motrix_envs/imitation/wrappers/__init__.py` | Wrapper 导出 |
+| `motrix_envs/src/motrix_envs/manipulation/libero/` | LIBERO MotrixSim 环境定义 |
+| `motrix_il/src/lerobot-main/src/lerobot/envs/motrixsim.py` | LeRobot 侧 MotrixSim 环境工厂 |
+| `motrix_il/src/lerobot-main/src/lerobot/envs/libero_motrixsim.py` | LeRobot 侧 LIBERO MotrixSim 环境工厂 |
+| `motrix_il/src/lerobot-main/src/lerobot/envs/configs.py` | 新增 `MotrixSimEnv`、`LiberoMotrixSimEnv`，修改 `AlohaEnv.create_envs()` |
 
----
+### 待实现（RoboMME + VLABench）
 
-## 9. 未决问题
-
-1. **motrixsim 是否有 Python 3.12 支持计划？** — 这决定了长期能否统一环境，以及短期内 bridge 层是否需要 subprocess 隔离
-2. **MotrixSim 环境是否已有 gymnasium 接口？** — motrix_rl 依赖 `gymnasium===1.1.1`，需要确认 motrix_envs 中的环境是否实现了 `gymnasium.Env`
-3. **robomimic 的哪些算法是必须的？** — 确定 vendored 后优先适配的范围。建议从 BC、BC-RNN 开始，后续按需添加 IQL、CQL 等
-4. **motrix_il 是否需要单独的 robomimic venv？** — 如果 vendored + 松绑后依赖冲突仍然无法解决，可以将 robomimic 拆到 `motrix_il` 内的独立 venv（两个 pyproject.toml），但这增加了复杂度
+| 文件 | 说明 |
+|---|---|
+| `motrix_envs/src/motrix_envs/manipulation/robomme/` | RoboMME MotrixSim 场景（16 任务，Franka + 桌面物体） |
+| `motrix_envs/src/motrix_envs/manipulation/vlabench/` | VLABench MotrixSim 场景（41 任务，Franka + 复杂物体） |
+| `motrix_envs/src/motrix_envs/imitation/wrappers/robomme_gym.py` | `MotrixRoboMMEGymEnv` — RoboMME gymnasium wrapper |
+| `motrix_envs/src/motrix_envs/imitation/wrappers/vlabench_gym.py` | `MotrixVLABenchGymEnv` — VLABench gymnasium wrapper |
+| `motrix_il/src/lerobot-main/src/lerobot/envs/robomme_motrixsim.py` | LeRobot 侧 RoboMME MotrixSim 环境工厂 |
+| `motrix_il/src/lerobot-main/src/lerobot/envs/vlabench_motrixsim.py` | LeRobot 侧 VLABench MotrixSim 环境工厂 |
+| `motrix_il/src/lerobot-main/src/lerobot/envs/configs.py` | 新增 `RoboMMEMotrixSimEnv`、`VLABenchMotrixSimEnv` 配置类 |

@@ -6,16 +6,27 @@ from typing import Any
 
 import gymnasium as gym
 
-from motrix_envs.imitation.wrappers import MotrixAlohaTransferCubeGymEnv
+from motrix_envs.imitation.wrappers import MotrixAlohaTransferCubeGymEnv, MotrixLiberoGymEnv
 
 from .utils import _LazyAsyncVectorEnv
 
 
+LIBERO_MOTRIXSIM_TASKS = {
+    "libero",
+    "libero_spatial",
+    "libero_object",
+    "libero_goal",
+    "libero_10",
+}
+
+
 def _make_env_fns(task: str, n_envs: int, episode_length: int) -> list[Callable[[], gym.Env]]:
     task_aliases = {"AlohaTransferCube-v0", "aloha-transfer-cube", "transfer_cube"}
-    if task not in task_aliases:
-        raise ValueError(f"Unsupported MotrixSim imitation task '{task}'.")
-    return [partial(MotrixAlohaTransferCubeGymEnv, max_episode_steps=episode_length) for _ in range(n_envs)]
+    if task in task_aliases:
+        return [partial(MotrixAlohaTransferCubeGymEnv, max_episode_steps=episode_length) for _ in range(n_envs)]
+    if task in LIBERO_MOTRIXSIM_TASKS:
+        return [partial(MotrixLiberoGymEnv, max_episode_steps=episode_length, task=task) for _ in range(n_envs)]
+    raise ValueError(f"Unsupported MotrixSim imitation task '{task}'.")
 
 
 def create_motrixsim_envs(

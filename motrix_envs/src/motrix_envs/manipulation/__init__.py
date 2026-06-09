@@ -17,6 +17,7 @@ from . import (
     aloha_transfer_cube,
     franka_lift_cube,
     franka_open_cabinet,
+    libero,
     rm65_open_cabinet,
     shadow_hand,
 )

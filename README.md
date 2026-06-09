@@ -285,19 +285,18 @@ uv sync --all-packages --extra simulation
 Evaluate a checkpoint trained by this repo:
   
 uv run lerobot-eval \
-  --policy.path=outputs/train/act_aloha_transfer_cube/checkpoints/076000/pretrained_model \
+  --policy.path=outputs/train/act_aloha_transfer_cube/checkpoints/156000/pretrained_model \
   --policy.device=cuda \
   --env.type=aloha \
   --env.task=AlohaTransferCube-v0 \
   --env.episode_length=600 \
   --eval.n_episodes=1 \
-  --eval.batch_size=1 \
+  --eval.batch_size=4 \
   --policy.use_amp=false \
-  --output_dir=outputs/eval/act_aloha_transfer_cube_ep600 \
-  --seed=1001
+  --output_dir=outputs/eval/act_aloha_transfer_cube_ep600
 
 MUJOCO_GL=egl uv run lerobot-eval \
-  --policy.path=outputs/train/act_aloha_transfer_cube/checkpoints/092000/pretrained_model \
+  --policy.path=outputs/train/act_aloha_transfer_cube/checkpoints/156000/pretrained_model \
   --policy.device=cuda \
   --env.type=aloha_mujoco \
   --env.task=AlohaTransferCube-v0 \

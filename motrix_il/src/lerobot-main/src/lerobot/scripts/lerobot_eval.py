@@ -94,6 +94,8 @@ from lerobot.utils.utils import (
     inside_slurm,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -168,16 +170,17 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        if "task" in getattr(policy.config, "input_features", {}):
-            # Infer "task" from sub-environments (prefer natural language description).
-            # env.call() works with both SyncVectorEnv and AsyncVectorEnv when the attr exists.
+        # Provide task text whenever the environment exposes it. Some policies
+        # (for example pi0/pi05) consume the task from complementary data via a
+        # tokenizer step rather than declaring a literal "task" input feature.
+        if "task" not in observation:
             try:
                 observation["task"] = list(env.call("task_description"))
             except (AttributeError, NotImplementedError):
                 try:
                     observation["task"] = list(env.call("task"))
                 except (AttributeError, NotImplementedError):
-                    observation["task"] = [""] * env.num_envs
+                    pass
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)
@@ -326,12 +329,15 @@ def eval_policy(
         if n_episodes_rendered >= max_episodes_rendered:
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
-        if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
-        elif hasattr(env, "call"):
-            # Here we must render all frames and discard any we don't need.
-            # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+        try:
+            if isinstance(env, gym.vector.SyncVectorEnv):
+                ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            elif hasattr(env, "call"):
+                # Here we must render all frames and discard any we don't need.
+                # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
+                ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Skipping eval video frame because env.render() failed: %s", exc)
 
     def write_video_checked(video_path: Path, frames: np.ndarray, fps: int):
         try:

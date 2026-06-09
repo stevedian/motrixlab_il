@@ -34,9 +34,12 @@ START_ARM_POSE = np.array(
 
 PUPPET_GRIPPER_POSITION_OPEN = 0.05800
 PUPPET_GRIPPER_POSITION_CLOSE = 0.01844
-BOX_X_RANGE = (-0.12, 0.12)
-BOX_Y_RANGE = (0.42, 0.58)
-BOX_Z_HEIGHT = 0.1
+BOX_X_RANGE = (0.0, 0.2)
+BOX_Y_RANGE = (0.4, 0.6)
+BOX_Z_HEIGHT = 0.05
+SUCCESS_X_THRESHOLD = -0.02
+LIFT_Z_THRESHOLD = 0.04
+GRIPPER_PROXIMITY_THRESHOLD = 0.12
 
 
 @registry.env("aloha-transfer-cube", "np")
@@ -51,9 +54,13 @@ class AlohaTransferCubeEnv(NpEnv):
         self._ctrl_high = self._model.actuator_ctrl_limits[1].astype(np.float32)
 
         self._red_box = self._model.get_geom("red_box")
+        self._box_body = self._model.get_body("box")
         self._table = self._model.get_geom("table")
         self._left_finger = self._model.get_geom("vx300s_left/10_left_gripper_finger")
         self._right_finger = self._model.get_geom("vx300s_right/10_right_gripper_finger")
+        self._left_gripper = self._model.get_link("vx300s_left/gripper_link")
+        self._right_gripper = self._model.get_link("vx300s_right/gripper_link")
+        self._rng = np.random.default_rng()
         self._contact_pairs = np.array(
             [
                 [self._red_box.index, self._right_finger.index],
@@ -86,7 +93,7 @@ class AlohaTransferCubeEnv(NpEnv):
     def update_state(self, state: NpEnvState):
         obs = self._compute_observation(state.data)
         reward = self._compute_reward(state.data).astype(np.float32)
-        success = reward >= 4.0
+        success = self._compute_success(state.data, reward)
 
         state.obs = obs
         state.reward = reward
@@ -117,14 +124,15 @@ class AlohaTransferCubeEnv(NpEnv):
 
     def _compute_observation(self, data: mtx.SceneData):
         qpos = np.asarray(data.dof_pos, dtype=np.float32)
+        ctrl = np.asarray(data.actuator_ctrls, dtype=np.float32)
         left_qpos = qpos[:, :8]
         right_qpos = qpos[:, 8:16]
         obs = np.concatenate(
             [
                 left_qpos[:, :6],
-                self._normalize_gripper_position(left_qpos[:, 6:7]),
+                self._normalize_gripper_position(ctrl[:, 6:7]),
                 right_qpos[:, :6],
-                self._normalize_gripper_position(right_qpos[:, 6:7]),
+                self._normalize_gripper_position(ctrl[:, 14:15]),
             ],
             axis=-1,
         )
@@ -151,15 +159,26 @@ class AlohaTransferCubeEnv(NpEnv):
 
     def _compute_reward(self, data: mtx.SceneData):
         reward = np.zeros((data.shape[0],), dtype=np.float32)
+        cube_pos = self._box_body.get_position(data).astype(np.float32)
+        left_pos = self._left_gripper.get_position(data).astype(np.float32)
+        right_pos = self._right_gripper.get_position(data).astype(np.float32)
+        lifted = cube_pos[:, 2] > LIFT_Z_THRESHOLD
+        near_right = np.linalg.norm(cube_pos - right_pos, axis=-1) < GRIPPER_PROXIMITY_THRESHOLD
+        near_left = np.linalg.norm(cube_pos - left_pos, axis=-1) < GRIPPER_PROXIMITY_THRESHOLD
+
+        touch_right = near_right
+        touch_left = near_left
+        touch_table = np.logical_not(lifted)
         try:
             contacts = self._model.get_contact_query(data).is_colliding(self._contact_pairs)
-            contacts = np.asarray(contacts, dtype=bool).reshape(data.shape[0], 3)
+            contacts = np.asarray(contacts, dtype=bool)
+            if contacts.size == data.shape[0] * 3:
+                contacts = contacts.reshape(data.shape[0], 3)
+                touch_right = np.logical_or(touch_right, contacts[:, 0])
+                touch_table = np.logical_or(touch_table, contacts[:, 1])
+                touch_left = np.logical_or(touch_left, contacts[:, 2])
         except Exception:
-            return reward
-
-        touch_right = contacts[:, 0]
-        touch_table = contacts[:, 1]
-        touch_left = contacts[:, 2]
+            pass
 
         reward[touch_right] = 1.0
         reward[np.logical_and(touch_right, np.logical_not(touch_table))] = 2.0
@@ -167,22 +186,22 @@ class AlohaTransferCubeEnv(NpEnv):
         reward[np.logical_and(touch_left, np.logical_not(touch_table))] = 4.0
         return reward
 
-    @staticmethod
-    def _sample_box_pose(num_envs: int):
-        x = np.random.uniform(*BOX_X_RANGE, size=(num_envs, 1))
-        y = np.random.uniform(*BOX_Y_RANGE, size=(num_envs, 1))
+    def _compute_success(self, data: mtx.SceneData, reward: np.ndarray):
+        cube_pos = self._box_body.get_position(data).astype(np.float32)
+        left_pos = self._left_gripper.get_position(data).astype(np.float32)
+        near_left = np.linalg.norm(cube_pos - left_pos, axis=-1) < GRIPPER_PROXIMITY_THRESHOLD
+        lifted = cube_pos[:, 2] > LIFT_Z_THRESHOLD
+        return np.logical_and.reduce((reward >= 4.0, cube_pos[:, 0] <= SUCCESS_X_THRESHOLD, lifted, near_left))
+
+    def seed(self, seed: int | None):
+        if seed is not None:
+            self._rng = np.random.default_rng(seed)
+
+    def _sample_box_pose(self, num_envs: int):
+        x = self._rng.uniform(*BOX_X_RANGE, size=(num_envs, 1))
+        y = self._rng.uniform(*BOX_Y_RANGE, size=(num_envs, 1))
         z = np.full((num_envs, 1), BOX_Z_HEIGHT, dtype=np.float32)
-        yaw = np.random.uniform(-np.pi, np.pi, size=(num_envs, 1)).astype(np.float32)
-        half_yaw = yaw * 0.5
-        quat = np.concatenate(
-            [
-                np.zeros((num_envs, 1), dtype=np.float32),
-                np.zeros((num_envs, 1), dtype=np.float32),
-                np.sin(half_yaw),
-                np.cos(half_yaw),
-            ],
-            axis=-1,
-        )
+        quat = np.tile(np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32), (num_envs, 1))
         return np.concatenate([x, y, z, quat], axis=-1).astype(np.float32)
 
     @staticmethod

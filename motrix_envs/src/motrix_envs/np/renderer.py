@@ -142,9 +142,10 @@ class NpRenderer:
             return
 
         try:
+            for camera in env.model.cameras.tolist():
+                camera.set_near_far(0.01, 10.0)
             self._render = RenderApp()
-            settings = RenderSettings.performance()
-            settings.enable_shadow = True
+            settings = RenderSettings.quality()
             self._render.launch(
                 env.model,
                 batch=num_envs,

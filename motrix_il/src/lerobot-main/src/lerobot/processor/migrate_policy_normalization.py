@@ -160,6 +160,8 @@ def detect_features_and_norm_modes(
                     feature_type = FeatureType.STATE
                 elif feature_type_str == "ACTION":
                     feature_type = FeatureType.ACTION
+                elif feature_type_str == "ENV":
+                    feature_type = FeatureType.ENV
                 else:
                     print(f"Warning: Unknown feature type '{feature_type_str}', skipping")
                     continue
@@ -195,6 +197,8 @@ def detect_features_and_norm_modes(
             # Determine feature type
             if "image" in key or "visual" in key:
                 feature_type = FeatureType.VISUAL
+            elif "environment" in key:
+                feature_type = FeatureType.ENV
             elif "state" in key:
                 feature_type = FeatureType.STATE
             elif ACTION in key:
@@ -214,6 +218,8 @@ def detect_features_and_norm_modes(
             # Determine feature type based on key
             if "image" in key or "visual" in key or "pixels" in key:
                 feature_type = FeatureType.VISUAL
+            elif "environment" in key:
+                feature_type = FeatureType.ENV
             elif "state" in key or "joint" in key or "position" in key:
                 feature_type = FeatureType.STATE
             elif ACTION in key:
@@ -379,6 +385,8 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
         # Determine feature type based on key
         if "image" in key or "visual" in key:
             feature_type = FeatureType.VISUAL
+        elif "environment" in key:
+            feature_type = FeatureType.ENV
         elif "state" in key:
             feature_type = FeatureType.STATE
         elif ACTION in key:
