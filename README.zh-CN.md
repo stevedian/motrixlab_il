@@ -47,7 +47,7 @@ cd MotrixLab
 git lfs pull
 ```
 
-### 安装
+## 安装
 
 **RL 和 IL 所有环境：**
 
@@ -86,11 +86,11 @@ uv sync --all-packages --extra training --extra simulation # + 仿真环境 (Pus
 | `pi`         | Pi0 策略                                   |
 | `smolvla`    | SmolVLA 策略                               |
 
-### RL 训练
+## RL 训练
 
 ```bash
-uv run scripts/train.py --env cartpole               # SKRL（默认）
-uv run scripts/train.py --env cartpole --rllib rslrl  # RSLRL
+uv run scripts/train.py --backend rl --env cartpole               # SKRL（默认）
+uv run scripts/train.py --backend rl --env cartpole --rllib rslrl  # RSLRL
 ```
 
 训练结果通过 TensorBoard 查看：
@@ -99,11 +99,11 @@ uv run scripts/train.py --env cartpole --rllib rslrl  # RSLRL
 uv run tensorboard --logdir runs/{env-name}
 ```
 
-### RL 环境可视化与推理
+## RL 环境可视化与推理
 
 ```bash
 uv run scripts/view.py --env cartpole   # 仅查看环境
-uv run scripts/play.py --env cartpole   # 策略推理
+uv run scripts/play.py --backend rl --env cartpole   # 策略推理
 ```
 
 ## lerobot 已注册的 MotrixSim 环境
@@ -130,7 +130,7 @@ PushT 支持基于状态、基于图像、基于图像 + 状态模式：
 #### 基于图像（默认 pixels_agent_pos）
 
 ```bash
-uv run lerobot-train \
+uv run scripts/train.py --backend il \
   --policy.type=diffusion \
   --policy.device=cuda \
   --policy.push_to_hub=false \
@@ -150,7 +150,7 @@ uv run lerobot-train \
 ## lerobot 评估
 
 ```bash
-uv run lerobot-eval \
+uv run scripts/play.py --backend il \
   --policy.path=outputs/train/diffusion_pusht_image_state/checkpoints/last/pretrained_model \
   --policy.device=cuda \
   --env.type=pusht \
@@ -160,14 +160,12 @@ uv run lerobot-eval \
   --output_dir=outputs/eval/diffusion_pusht_image_state
 ```
 
-`--env.discover_packages_path=motrix_il.lerobot` 会触发 `plugin.py` 中的 `register_envs()`，注册 `aloha_motrixsim` 和 `libero_motrixsim` 两个环境类型。
-
 ### 使用原生 MuJoCo 环境
 
 原生的 `aloha`、`libero` 等环境类型不受影响，需要无头渲染时设置环境变量：
 
 ```bash
-MUJOCO_GL=egl uv run lerobot-eval --env.type=aloha ...
+MUJOCO_GL=egl uv run scripts/play.py --backend il --env.type=aloha ...
 ```
 
 > 子进程遇到 `NamespaceNotFound` 时，加 `--eval.use_async_envs=false` 使用同步模式。

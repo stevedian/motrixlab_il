@@ -13,121 +13,135 @@
 # limitations under the License.
 # ==============================================================================
 
+from __future__ import annotations
 
+import argparse
 import logging
-
-from absl import app, flags
-from skrl import config
-
-from motrix_rl import utils
+import shutil
+import subprocess
+import sys
 
 logger = logging.getLogger(__name__)
 
-_ENV = flags.DEFINE_string("env", "cartpole", "The env to train")
-_SIM_BACKEND = flags.DEFINE_string(
-    "sim-backend",
-    None,
-    "The simulation backend to use.(If not specified, it will be choosen automatically)",
-)
-_NUM_ENVS = flags.DEFINE_integer("num-envs", 1024, "Number of envs to train")
-_RENDER = flags.DEFINE_bool("render", False, "Render the env")
-_TRAIN_BACKEND = flags.DEFINE_string("train-backend", None, "The learning backend. (jax/torch)")
-_SEED = flags.DEFINE_integer("seed", None, "Random seed for reproducibility")
-_RAND_SEED = flags.DEFINE_bool("rand-seed", False, "Generate random seed")
-_RLLIB = flags.DEFINE_string("rllib", "skrl", "The RL framework (skrl/rslrl)")
+LEROBOT_PLUGIN_ARG = "--env.discover_packages_path=motrix_il.lerobot"
 
 
-def get_train_backend(supports: utils.DeviceSupports, train_backend_arg: str | None, rllib: str):
-    """
-    Determine the training backend based on device supports, user input, and RL framework.
-
-    Args:
-        supports: Device support information
-        train_backend_arg: User-specified backend via --train-backend flag (None if not provided)
-        rllib: RL framework to use ("skrl" or "rslrl")
-
-    Returns:
-        The determined backend name ("jax" or "torch")
-
-    Raises:
-        Exception: If user specifies incompatible backend or no backend is available
-    """
-    # RSLRL only supports PyTorch
+def get_train_backend(supports, train_backend_arg: str | None, rllib: str):
+    """Determine the training backend based on device support and user input."""
     if rllib == "rslrl":
         if train_backend_arg is not None and train_backend_arg != "torch":
-            raise Exception("RSLRL only supports PyTorch backend.")
+            raise RuntimeError("RSLRL only supports PyTorch backend.")
         if not supports.torch:
-            raise Exception("RSLRL requires PyTorch, but it is not available on your device.")
+            raise RuntimeError("RSLRL requires PyTorch, but it is not available on your device.")
         return "torch"
 
-    # User explicitly specified backend
     if train_backend_arg is not None:
         backend = train_backend_arg
         if backend == "jax" and not supports.jax:
-            raise Exception("JAX is not available on your device.")
+            raise RuntimeError("JAX is not available on your device.")
         if backend == "torch" and not supports.torch:
-            raise Exception("PyTorch is not available on your device.")
+            raise RuntimeError("PyTorch is not available on your device.")
         return backend
 
-    # Auto-select backend based on device priority
     if supports.jax and supports.jax_gpu:
         return "jax"
-    elif supports.torch and supports.torch_gpu:
+    if supports.torch and supports.torch_gpu:
         return "torch"
-    elif supports.jax:
+    if supports.jax:
         return "jax"
-    elif supports.torch:
+    if supports.torch:
         return "torch"
-    else:
-        raise Exception("Neither JAX nor PyTorch is available on the device.")
+    raise RuntimeError("Neither JAX nor PyTorch is available on the device.")
 
 
-def main(argv):
+def add_lerobot_plugin_arg(args: list[str]) -> list[str]:
+    for arg in args:
+        if arg == "--env.discover_packages_path" or arg.startswith("--env.discover_packages_path="):
+            return args
+    return [LEROBOT_PLUGIN_ARG, *args]
+
+
+def run_lerobot_train(args: list[str]) -> int:
+    executable = shutil.which("lerobot-train")
+    if executable is None:
+        raise RuntimeError("Could not find 'lerobot-train'. Install the IL extras first.")
+    command = [executable, *add_lerobot_plugin_arg(args)]
+    logger.info("Running: %s", " ".join(command))
+    return subprocess.run(command).returncode
+
+
+def run_rl_train(args: argparse.Namespace) -> None:
+    from skrl import config
+
+    from motrix_rl import utils
+
     device_supports = utils.get_device_supports()
     logger.info(device_supports)
-    env_name = _ENV.value
-    enable_render = _RENDER.value
 
     rl_override = {}
+    if args.num_envs is not None:
+        rl_override["num_envs"] = args.num_envs
 
-    if _NUM_ENVS.present:
-        rl_override["num_envs"] = _NUM_ENVS.value
-
-    if _RAND_SEED.value:
+    if args.rand_seed:
         rl_override["runner.seed"] = None
-    elif _SEED.present:
-        rl_override["runner.seed"] = _SEED.value
+    elif args.seed is not None:
+        rl_override["runner.seed"] = args.seed
 
-    sim_backend = _SIM_BACKEND.value
-    rllib = _RLLIB.value
+    train_backend = get_train_backend(device_supports, args.train_backend, args.rllib)
 
-    # Determine the training backend
-    train_backend = get_train_backend(device_supports, _TRAIN_BACKEND.value, rllib)
-
-    trainer = None
-    if rllib == "rslrl":
-        # RSLRL training flow
+    if args.rllib == "rslrl":
         assert device_supports.torch, "PyTorch is not available on your device"
         assert train_backend == "torch", "RSLRL only supports PyTorch backend"
         from motrix_rl.rslrl.torch.train import ppo
 
-        trainer = ppo.Trainer(env_name, sim_backend, cfg_override=rl_override, enable_render=enable_render)
-
+        trainer = ppo.Trainer(args.env, args.sim_backend, cfg_override=rl_override, enable_render=args.render)
     elif train_backend == "jax":
         from motrix_rl.skrl.jax.train import ppo
 
-        config.jax.backend = "jax"  # or "numpy"
-        trainer = ppo.Trainer(env_name, sim_backend, cfg_override=rl_override, enable_render=enable_render)
-
+        config.jax.backend = "jax"
+        trainer = ppo.Trainer(args.env, args.sim_backend, cfg_override=rl_override, enable_render=args.render)
     elif train_backend == "torch":
         from motrix_rl.skrl.torch.train import ppo
 
-        trainer = ppo.Trainer(env_name, sim_backend, cfg_override=rl_override, enable_render=enable_render)
+        trainer = ppo.Trainer(args.env, args.sim_backend, cfg_override=rl_override, enable_render=args.render)
     else:
-        raise Exception(f"Unknown train backend: {train_backend}")
+        raise RuntimeError(f"Unknown train backend: {train_backend}")
 
     trainer.train()
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Unified MotrixLab training entry. Use --backend rl for Motrix RL, "
+            "or --backend il to forward remaining arguments to lerobot-train."
+        )
+    )
+    parser.add_argument("--backend", choices=["rl", "il"], default="rl", help="Training backend.")
+    parser.add_argument("--env", default="cartpole", help="RL environment name.")
+    parser.add_argument("--sim-backend", default=None, help="RL simulation backend.")
+    parser.add_argument("--num-envs", type=int, default=None, help="Number of RL envs to train.")
+    parser.add_argument("--render", action="store_true", help="Render the RL environment while training.")
+    parser.add_argument("--train-backend", choices=["jax", "torch"], default=None, help="RL learning backend.")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility.")
+    parser.add_argument("--rand-seed", action="store_true", help="Generate a random RL seed.")
+    parser.add_argument("--rllib", choices=["skrl", "rslrl"], default="skrl", help="RL framework.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO)
+    parser = build_parser()
+    args, passthrough = parser.parse_known_args(argv)
+
+    if args.backend == "il":
+        return run_lerobot_train(passthrough)
+
+    if passthrough:
+        parser.error(f"Unknown RL arguments: {' '.join(passthrough)}")
+    run_rl_train(args)
+    return 0
+
+
 if __name__ == "__main__":
-    app.run(main)
+    raise SystemExit(main())

@@ -89,8 +89,8 @@ uv sync --all-packages --extra training --extra simulation # + Simulation envs (
 ### RL Training
 
 ```bash
-uv run scripts/train.py --env cartpole               # SKRL (default)
-uv run scripts/train.py --env cartpole --rllib rslrl  # RSLRL
+uv run scripts/train.py --backend rl --env cartpole               # SKRL (default)
+uv run scripts/train.py --backend rl --env cartpole --rllib rslrl  # RSLRL
 ```
 
 View training metrics with TensorBoard:
@@ -103,10 +103,14 @@ uv run tensorboard --logdir runs/{env-name}
 
 ```bash
 uv run scripts/view.py --env cartpole   # View environment
-uv run scripts/play.py --env cartpole   # Run inference
+uv run scripts/play.py --backend rl --env cartpole   # Run inference
 ```
 
 ## LeRobot Training
+
+IL also uses the unified entrypoint: `scripts/train.py --backend il` forwards the
+remaining arguments to `lerobot-train` and automatically loads the MotrixLab
+LeRobot plugin.
 
 ### PushT
 
@@ -120,7 +124,7 @@ PushT supports state-based, image-based, and image + state modes:
 
 ```bash
 # Image-based (default pixels_agent_pos)
-uv run lerobot-train \
+uv run scripts/train.py --backend il \
   --policy.type=diffusion \
   --policy.device=cuda \
   --policy.push_to_hub=false \
@@ -148,8 +152,11 @@ More benchmarks coming.
 
 ## LeRobot Evaluation
 
+IL evaluation uses `scripts/play.py --backend il`; it forwards the remaining
+arguments to `lerobot-eval` and automatically loads the MotrixLab LeRobot plugin.
+
 ```bash
-uv run lerobot-eval \
+uv run scripts/play.py --backend il \
   --policy.path=outputs/train/diffusion_pusht_image_state/checkpoints/last/pretrained_model \
   --policy.device=cuda \
   --env.type=pusht \
@@ -159,7 +166,11 @@ uv run lerobot-eval \
   --output_dir=outputs/eval/diffusion_pusht_image_state
 ```
 
-`--env.discover_packages_path=motrix_il.lerobot` triggers `register_envs()` in `plugin.py`, registering both `aloha_motrixsim` and `libero_motrixsim`.
+The unified entrypoint automatically adds
+`--env.discover_packages_path=motrix_il.lerobot`, triggering `register_envs()`
+in `plugin.py` to register both `aloha_motrixsim` and `libero_motrixsim`. Add
+that argument manually only when calling `lerobot-train` or `lerobot-eval`
+directly.
 
 ### Using Native MuJoCo Environments
 
