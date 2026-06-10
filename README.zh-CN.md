@@ -113,9 +113,9 @@ uv run scripts/play.py --env cartpole   # 策略推理
 | `pusht`             | MotrixSim  | 2D pusht任务           |
 | `aloha_motrixsim`   | MotrixSim  | ALOHA 双臂操作任务      |
 
-## lerobot 训练
-
 更多 benchmark 持续接入中。
+
+## lerobot 训练
 
 ### PushT
 
