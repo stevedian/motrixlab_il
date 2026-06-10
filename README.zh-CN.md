@@ -106,7 +106,16 @@ uv run scripts/view.py --env cartpole   # 仅查看环境
 uv run scripts/play.py --env cartpole   # 策略推理
 ```
 
+## lerobot 已注册的 MotrixSim 环境
+
+| env.type            | 后端       | 说明                    |
+|---------------------|------------|-------------------------|
+| `pusht`             | MotrixSim  | 2D pusht任务           |
+| `aloha_motrixsim`   | MotrixSim  | ALOHA 双臂操作任务      |
+
 ## lerobot 训练
+
+更多 benchmark 持续接入中。
 
 ### PushT
 
@@ -118,7 +127,7 @@ PushT 支持基于状态、基于图像、基于图像 + 状态模式：
 | 图像 + 位姿   | `pixels_agent_pos`            | `lerobot/pusht`            | 图像 + 末端位姿（默认）|
 | 关键点        | `environment_state_agent_pos` | `lerobot/pusht_keypoints`  | 纯状态/关键点         |
 
-# 基于图像（默认 pixels_agent_pos）
+#### 基于图像（默认 pixels_agent_pos）
 
 ```bash
 uv run lerobot-train \
@@ -137,15 +146,6 @@ uv run lerobot-train \
   --wandb.enable=true \
   --wandb.project=diffusion_pusht_image_state
 ```
-
-更多 benchmark 持续接入中。
-
-## 已注册的 MotrixSim 环境
-
-| env.type            | 后端       | 说明                    |
-|---------------------|------------|-------------------------|
-| `pusht`             | MotrixSim  | 2D pusht任务           |
-| `aloha_motrixsim`   | MotrixSim  | ALOHA 双臂操作任务      |
 
 ## lerobot 评估
 
