@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "motrix-il"
 version = "0.1.0"
-description = "Imitation learning utilities for MotrixLab powered by a vendored LeRobot checkout."
+description = "MotrixLab imitation learning integrations."
 authors = [{ name = "Motphys", email = "developers@motphys.com" }]
 requires-python = ">=3.12,<3.13"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
     "lerobot",
+    "motrix-envs",
 ]
 
 [project.optional-dependencies]
@@ -38,4 +39,5 @@ dev = ["pytest>=8.3.3"]
 package = true
 
 [tool.uv.sources]
-lerobot = { path = "src/lerobot-main", editable = true }
+lerobot = { git = "https://github.com/huggingface/lerobot.git", rev = "bd22407d9390f6973868fed9a883b4f295db105e" }
+motrix-envs = { workspace = true }
